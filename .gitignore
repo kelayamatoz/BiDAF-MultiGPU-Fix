@@ -1,3 +1,6 @@
 data/
 tf11/
 tf12/
+__pycache__/
+tftest.py
+out/basic/00/shared.json

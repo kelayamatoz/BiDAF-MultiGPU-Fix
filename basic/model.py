@@ -16,10 +16,19 @@ def get_multi_gpu_models(config):
     models = []
     for gpu_idx in range(config.num_gpus):
         with tf.name_scope("model_{}".format(gpu_idx)) as scope, tf.device("/{}:{}".format(config.device_type, gpu_idx)):
+            print(">>>>>>>>>>> GPU Index = " + str(gpu_idx) + ">>>>>>>>>>>")
             if gpu_idx > 0:
                 tf.get_variable_scope().reuse_variables()
             model = Model(config, scope, rep=gpu_idx == 0)
             models.append(model)
+
+#    with tf.variable_scope(tf.get_variable_scope()) as vscope:
+#        for gpu_idx in range(config.num_gpus):
+#            with tf.device("/{}:{}".format(config.device_type, gpu_idx)):
+#                with tf.name_scope("model_{}".format(gpu_idx)) as scope:
+#                    model = Model(config, scope, rep=gpu_idx == 0)
+#                    models.append(model)
+#                    tf.get_variable_scope().reuse_variables()
     return models
 
 
@@ -58,14 +67,16 @@ class Model(object):
 
         # Loss outputs
         self.loss = None
-
         self._build_forward()
         self._build_loss()
         self.var_ema = None
-        if rep:
-            self._build_var_ema()
-        if config.mode == 'train':
-            self._build_ema()
+
+        with tf.variable_scope(tf.get_variable_scope(), reuse=False):
+            print(tf.get_variable_scope().reuse)
+            if rep:
+                self._build_var_ema()
+            if config.mode == 'train':
+                self._build_ema()
 
         self.summary = tf.summary.merge_all()
         self.summary = tf.summary.merge(tf.get_collection("summaries", scope=self.scope))
