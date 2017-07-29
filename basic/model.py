@@ -14,26 +14,20 @@ from my.tensorflow.rnn_cell import SwitchableDropoutWrapper, AttentionCell
 
 def get_multi_gpu_models(config):
     models = []
-    for gpu_idx in range(config.num_gpus):
-        with tf.name_scope("model_{}".format(gpu_idx)) as scope, tf.device("/{}:{}".format(config.device_type, gpu_idx)):
-            print(">>>>>>>>>>> GPU Index = " + str(gpu_idx) + ">>>>>>>>>>>")
-            if gpu_idx > 0:
-                tf.get_variable_scope().reuse_variables()
-            model = Model(config, scope, rep=gpu_idx == 0)
-            models.append(model)
+    with tf.variable_scope(tf.get_variable_scope()):
+        for gpu_idx in range(config.num_gpus):
+            with tf.name_scope("model_{}".format(gpu_idx)) as scope, tf.device("/{}:{}".format(config.device_type, gpu_idx)):
+                print(">>>>>>>>>>> GPU Index = " + str(gpu_idx) + ">>>>>>>>>>>")
+                if gpu_idx > 0:
+                    tf.get_variable_scope().reuse_variables()
+                model = Model(config, scope, gpu_idx, rep=gpu_idx == 0)
+                models.append(model)
 
-#    with tf.variable_scope(tf.get_variable_scope()) as vscope:
-#        for gpu_idx in range(config.num_gpus):
-#            with tf.device("/{}:{}".format(config.device_type, gpu_idx)):
-#                with tf.name_scope("model_{}".format(gpu_idx)) as scope:
-#                    model = Model(config, scope, rep=gpu_idx == 0)
-#                    models.append(model)
-#                    tf.get_variable_scope().reuse_variables()
     return models
 
 
 class Model(object):
-    def __init__(self, config, scope, rep=True):
+    def __init__(self, config, scope, gpu_idx, rep=True):
         self.scope = scope
         self.config = config
         self.global_step = tf.get_variable('global_step', shape=[], dtype='int32',
@@ -71,12 +65,10 @@ class Model(object):
         self._build_loss()
         self.var_ema = None
 
-        with tf.variable_scope(tf.get_variable_scope(), reuse=False):
-            print(tf.get_variable_scope().reuse)
-            if rep:
-                self._build_var_ema()
-            if config.mode == 'train':
-                self._build_ema()
+        if rep:
+            self._build_var_ema()
+        if config.mode == 'train':
+            self._build_ema()
 
         self.summary = tf.summary.merge_all()
         self.summary = tf.summary.merge(tf.get_collection("summaries", scope=self.scope))
@@ -92,10 +84,17 @@ class Model(object):
         M = tf.shape(self.x)[1]
         dc, dw, dco = config.char_emb_size, config.word_emb_size, config.char_out_size
 
-        with tf.variable_scope("emb"):
+        print("config.use_char_emb = ")
+        print(config.use_char_emb)
+
+        with tf.variable_scope("emb", reuse=False):
             if config.use_char_emb:
                 with tf.variable_scope("emb_var"), tf.device("/cpu:0"):
-                    char_emb_mat = tf.get_variable("char_emb_mat", shape=[VC, dc], dtype='float')
+                    print("entering emb_var")
+                    tvars = tf.global_variables()
+                    for var in tvars:
+                        print(var.name)
+                    char_emb_mat = tf.identity(tf.get_variable("char_emb_mat", shape=[VC, dc], dtype='float'))
 
                 with tf.variable_scope("char"):
                     Acx = tf.nn.embedding_lookup(char_emb_mat, self.cx)  # [N, M, JX, W, dc]
@@ -306,13 +305,13 @@ class Model(object):
         self.ema = tf.train.ExponentialMovingAverage(self.config.decay)
         ema = self.ema
         tensors = tf.get_collection("ema/scalar", scope=self.scope) + tf.get_collection("ema/vector", scope=self.scope)
-        ema_op = ema.apply(tensors)
-        for var in tf.get_collection("ema/scalar", scope=self.scope):
-            ema_var = ema.average(var)
-            tf.summary.scalar(ema_var.op.name, ema_var)
-        for var in tf.get_collection("ema/vector", scope=self.scope):
-            ema_var = ema.average(var)
-            tf.summary.histogram(ema_var.op.name, ema_var)
+        ema_op = tf.no_op() #ema.apply(tensors)
+        # for var in tf.get_collection("ema/scalar", scope=self.scope):
+        #     ema_var = ema.average(var)
+        #     tf.summary.scalar(ema_var.op.name, ema_var)
+        # for var in tf.get_collection("ema/vector", scope=self.scope):
+        #     ema_var = ema.average(var)
+        #     tf.summary.histogram(ema_var.op.name, ema_var)
 
         with tf.control_dependencies([ema_op]):
             self.loss = tf.identity(self.loss)
